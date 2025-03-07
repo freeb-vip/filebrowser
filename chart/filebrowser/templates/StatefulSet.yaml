@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "filebrowser.fullname" . }}
+  labels:
+    {{- include "filebrowser.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "filebrowser.fullname" . }}
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "filebrowser.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "filebrowser.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "filebrowser.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: {{ .Chart.Name }}-init
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", '-c', "/app/filebrowser -c /app/config/filebrowser.json config init && /app/filebrowser config set --auth.method=proxy --auth.header=x-forwarded-preferred-username --branding.name={{ .Values.filebrowser.name }} || true"]
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/filebrowser.json
+              subPath: filebrowser.json
+            - name: data
+              mountPath: /app/data
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["-c", "/app/config/filebrowser.json", "--cache-dir", "/app/cache"]
+          #command: ["sleep", "3600"]
+          ports:
+            - name: inhttp
+              containerPort: {{ .Values.service.inport }} ##仅内部可用
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.service.inport }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.service.inport }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/filebrowser.json
+              subPath: filebrowser.json
+            - name: data
+              mountPath: /app/data
+            - name: cache
+              mountPath: /app/cache
+        - name: {{ .Chart.Name }}-oauth2
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.oauth2Image.repository }}:{{ .Values.oauth2Image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.oauth2Image.pullPolicy }}
+          args: ["--config=/app/config/oauth2-proxy.cfg"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: {{ .Values.service.port }}
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: {{ .Values.service.port }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config-oauth2
+              mountPath: /app/config/oauth2-proxy.cfg
+              subPath: oauth2-proxy.cfg
+      volumes:
+        - name: config
+          configMap: 
+            name: {{ include "filebrowser.fullname" . }}
+        - name: config-oauth2
+          configMap: 
+            name: {{ include "filebrowser.fullname" . }}-oauth2
+        - name: cache
+          emptyDir: {}
+        {{- if and .Values.persistence.enabled .Values.persistence.existingClaim }}
+        - name: data
+          persistentVolumeClaim:
+              claimName: {{ .Values.persistence.existingClaim }}
+        {{- else if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+  {{- else if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ .Values.persistence.size }}
+  {{- end }}
