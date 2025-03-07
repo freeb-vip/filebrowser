@@ -1,0 +1,13 @@
+FROM cr.freeb.vip/public/golang:1.24.1-alpine3.21
+RUN set -eux && sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories
+
+RUN apk --update add nodejs  \
+                     make \
+                     bash \
+                     pnpm \
+                     npm
+COPY . /app
+WORKDIR /app
+RUN export GOPROXY=https://goproxy.cn,direct && make build
+
+

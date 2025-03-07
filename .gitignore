@@ -41,3 +41,5 @@ build/
 
 default.nix
 Dockerfile.dev
+chart/*.yaml
+chart/filebrowser/values-*.yaml
